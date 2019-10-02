@@ -1,0 +1,91 @@
+---
+title: "Task2 - Report"
+author: "Chiara Laudani"
+date: "02-10-2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(rvest) #Parsing of HTML/XML files
+library(tidyverse) #General-purpose data wrangling
+library(stringr) #String manipulation
+library(lubridate) #Eases DateTime manipulation
+library(zoo) #for as.Date
+library(dplyr) #For grouping and counting the rows per month
+library(ggplot2)
+```
+The task for this week is: "With one heading per county (Nordland, Troms and Finnmark), find out how many companies have been registered per month, per county, and make a plot of it".
+
+The first thing to do is to load the HTML content from the URL of the 'Brønnøysund Register Centre''s website and store it in a variable here called 'webpage'.
+
+```{r}
+url <- 'https://w2.brreg.no/kunngjoring/kombisok.jsp?datoFra=01.01.2019&datoTil=25.09.2019&id_region=100&id_fylke=-+-+-&id_niva1=2&id_bransje1=0'
+webpage <- read_html(url)
+str(webpage)
+```
+
+The content is then cleaned up and saved as a table by applying the html_nodes() function twice, and the html_table() function once after that.
+```{r}
+webpage_table <- 
+  html_nodes(webpage, xpath = "//table") %>% 
+  html_nodes("table") 
+webpage_table <- html_table(webpage_table[[1]])
+```
+
+The table still needs to be cleaned since it has columns that are not needed, multiple empty rows, and cells containing 'NA' as a value. We also notice that in the 'Announcement types' column (called 'X8' for now) there is only one type we are really interested in, so we filter out the other one and then translate to English the value of the type we are interested in.
+
+```{r}
+data_col <- 
+  webpage_table %>% 
+  select (X2, X4, X6, X8) %>%
+  filter(X8 != "Rettelse av foretaksnavn") %>%
+  filter(X2 != "")
+data_col$X8 <- recode(data_col$X8, "Nyregistrering i Foretaksregisteret"="New registration in Reg. of Business Enterprises")
+```
+
+We now want to find out in which row the separators with the name of the county are located, so we use the which() and grepl() functions together to get that exact information for all three counties. We then change the names of the columns, and add a 'county' column which we fill completely with 'NA' for now.
+
+```{r}
+nordland_row <- which(grepl("Nordland", data_col$X4))
+troms_row <- which(grepl("Troms", data_col$X4))
+finnmark_row <- which(grepl("Finnmark", data_col$X4))
+
+names(data_col) <- c("enterprise", "ent_num", 
+                     "creation_month", "announcement_type")
+
+data_col$county <- NA
+```
+
+A final clean up of the data is made before plotting: first we assign the correct county value to each row making use of the row indexes found earlier. We say that for every county, every row between that county's index and the next county's index-1, will get that county's value assigned in the 'county' column. For the Finnmark county, the range is between its index and the last row in the table.
+
+```{r}
+data_col$county[c(nordland_row:troms_row-1)] <- "Nordland"
+data_col$county[c(troms_row:finnmark_row-1)] <- "Troms"
+data_col$county[c(finnmark_row:nrow(data_col))] <- "Finnmark"
+```
+
+The rows with the county names are then removed, along with the columns with the enterprises' number, and the announcement type. This is done because that information will not be useful when plotting the data. 
+The format of the creation date is also changed to the "Date" format, and only the abbreviation of the corresponding month is kept. The day and year are removed because not influential on the plot's outcome. 
+
+```{r}
+data_col <- data_col[-c(finnmark_row, troms_row, nordland_row), ] %>%
+  select(., -c(ent_num, announcement_type))
+data_col$creation_month <- month.abb[month(as.Date(data_col$creation_month, format("%d.%m.%Y")))]
+```
+
+The data is then plotted using a bar chart and the dark theme provided in the ggplot2 package. The data is taken from the 'data_col' table where the number of enterpreises which registered in a specific month, are counted per each county. The abbreviations of the months are ordered chronologically - instead of alphabetically - and each county gets a different colour in the plot.  
+
+```{r}
+data_col %>%
+  mutate(creation_month=factor(creation_month, levels=month.abb, ordered=T)) %>% 
+  ggplot(aes(x=creation_month, color=county, fill=county)) +
+  geom_bar() + 
+  xlab("Month (2019)") + 
+  ylab("Number of enterprises registered") + 
+  ggtitle("Number of registered companies in 2019") +
+  theme_dark()
+```
+
+From the bar chart we can see that the county with the highest number of enterprises registered per month is Nordland, which clearly takes up the majority of the bar in each plotted month between the period of January and September 2019.
+
